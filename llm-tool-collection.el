@@ -536,27 +536,29 @@ Error: %s"
       (error "No user-relevant buffers found"))))
 
 (llm-tool-collection-deftool bash
-    (:category "system" :tags (system execution) :confirm t)
+    (:category "system" :tags (system execution) :async t :confirm t)
     ((command "Command string to execute in bash" :type string))
     "Executes bash COMMAND, returning its standard output.
-Signals an error if the command fails (non-zero exit code)
-or if process execution itself fails. Handles C-g interruption.
-WARNING: Executes arbitrary shell commands. Review carefully."
-  (let ((output-buffer (generate-new-buffer " bash-output")))
-    (condition-case nil
-        (unwind-protect
-            (let* ((exit-code (call-process "bash" nil output-buffer nil
-                                            "-c" command))
-                   (output (with-current-buffer output-buffer
-                             (buffer-string))))
-              (unless (zerop exit-code)
-                (error "Command failed with exit code %d\nOutput:\n%s"
-                       exit-code (if (string-empty-p output) "<no output>" output)))
-              output)
-          (when (buffer-live-p output-buffer)
-            (kill-buffer output-buffer)))
-      (quit
-       (error "Command interrupted")))))
+Signals an error if the command fails (non-zero exit code)."
+  (let* ((output-buffer (generate-new-buffer " *bash-output*"))
+         (process (start-process "bash" output-buffer
+                                 "bash" "-c" command)))
+    (set-process-query-on-exit-flag process nil)
+    (set-process-sentinel
+     process
+     (lambda (_process _event)
+       (let ((exit-code (process-exit-status process))
+             (output (with-current-buffer output-buffer
+                       (buffer-string))))
+         (if (zerop exit-code)
+             (funcall callback-fn output)
+           (funcall
+            callback-fn
+            (format "Command failed with exit code %d\n\nOutput:\n%s"
+                    exit-code (if (string-empty-p output)
+                                  "<no output>"
+                                output))))
+         (kill-buffer output-buffer))))))
 
 (provide 'llm-tool-collection)
 
